@@ -1,0 +1,410 @@
+# Creating the game files (single-file web game), a user manual PDF, README, and a zip for download.
+from pathlib import Path
+import json, zipfile, os
+
+# Paths
+out_dir = Path("/mnt/data/adivina_quien_kny")
+out_dir.mkdir(parents=True, exist_ok=True)
+
+# HTML game (single file)
+html_content = r"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Adivina Quién - Kimetsu no Yaiba</title>
+<style>
+  body{font-family: system-ui, -apple-system, Arial; background:#f7f7fb; color:#111; padding:16px;}
+  header{display:flex;align-items:center;gap:12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:12px;}
+  .card{background:#fff;border-radius:10px;padding:10px;box-shadow:0 4px 10px rgba(0,0,0,0.06);text-align:center}
+  img{width:100%;height:140px;object-fit:cover;border-radius:8px}
+  button{padding:8px 12px;border-radius:8px;border:0;background:#2563eb;color:#fff;cursor:pointer}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .log{background:#111;color:#fff;padding:8px;border-radius:8px;margin-top:12px}
+  .question{margin-top:8px}
+  footer{margin-top:20px;font-size:13px;color:#555}
+  .hidden{opacity:0.25}
+  .learn-toggle{margin-left:8px}
+  .small{font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Adivina Quién — Kimetsu no Yaiba</h1>
+</header>
+
+<div>
+  <div>
+    <label><input type="checkbox" id="learnToggle"> Activar aprendizaje (guarda localmente)</label>
+    <span class="small"> — Cuando está activado, el sistema guarda atributos nuevos en su navegador.</span>
+  </div>
+
+  <div class="controls">
+    <select id="questionSelect"></select>
+    <button id="askBtn">Preguntar</button>
+    <button id="guessBtn">Hacer Adivinanza</button>
+    <button id="resetBtn">Reiniciar Juego</button>
+  </div>
+
+  <div class="question" id="questionArea"></div>
+
+  <div class="grid" id="characters"></div>
+
+  <div class="log" id="logArea">Estado: listo.</div>
+
+  <div id="afterResult" style="display:none;margin-top:12px">
+    <label>¿Quién era realmente? <input id="realName" placeholder="Nombre del personaje"></label>
+    <button id="submitResult">Enviar resultado</button>
+    <div class="small">Si activó aprendizaje, puede añadir atributos separados por comas (ej: "respira sangre,usa katana corta")</div>
+    <input id="newAttributes" placeholder="Atributos nuevos (opcional)"/>
+  </div>
+
+  <footer>
+    Entrega: Guarde la carpeta completa para subir a GitHub y itch.io. El juego es HTML + JS (juego single-file).
+  </footer>
+</div>
+
+<script>
+// Datos iniciales: 10 personajes de Kimetsu no Yaiba (básicos). 
+// Nota: las imágenes usadas son placeholders (generadas por CSS). Reemplace por URLs al subir.
+const defaultCharacters = [
+  {name:"Tanjiro Kamado", attrs:["masculino","hermano","usa katana","respira agua"]},
+  {name:"Nezuko Kamado", attrs:["femenino","hermana","demonio","pequeña"]},
+  {name:"Zenitsu Agatsuma", attrs:["masculino","miedoso","usa katana","respira trueno"]},
+  {name:"Inosuke Hashibira", attrs:["masculino","salvaje","usa dos katanas","mascarahoguera"]},
+  {name:"Kanao Tsuyuri", attrs:["femenino","silenciosa","usa katana","respira flor"]},
+  {name:"Giyu Tomioka", attrs:["masculino","pilar","usa katana","respira agua"]},
+  {name:"Shinobu Kocho", attrs:["femenino","pilar","usa veneno","respira insecto"]},
+  {name:"Kyojuro Rengoku", attrs:["masculino","pilar","fuerte","respira llama"]},
+  {name:"Muzan Kibutsuji", attrs:["masculino","villano","demonio","manipulador"]},
+  {name:"Tengen Uzui", attrs:["masculino","pilar","showy","usa armamento explosivo"]}
+];
+
+const STORAGE_KEY = "adivina_kny_v1";
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return {characters: defaultCharacters.slice(), questions: null};
+    return JSON.parse(raw);
+  }catch(e){
+    return {characters: defaultCharacters.slice(), questions: null};
+  }
+}
+function saveState(state){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+let state = loadState();
+let currentCandidates = state.characters.map(c=>c.name);
+let lastAsked = null;
+let learnEnabled = false;
+
+const questionSelect = document.getElementById("questionSelect");
+const askBtn = document.getElementById("askBtn");
+const guessBtn = document.getElementById("guessBtn");
+const resetBtn = document.getElementById("resetBtn");
+const questionArea = document.getElementById("questionArea");
+const charactersDiv = document.getElementById("characters");
+const logArea = document.getElementById("logArea");
+const learnToggle = document.getElementById("learnToggle");
+const afterResult = document.getElementById("afterResult");
+const realNameInput = document.getElementById("realName");
+const submitResultBtn = document.getElementById("submitResult");
+const newAttributesInput = document.getElementById("newAttributes");
+
+learnToggle.addEventListener("change", (e)=>{learnEnabled = e.target.checked; log("Aprendizaje: "+(learnEnabled?"ON":"OFF"))});
+
+function buildQuestions(){
+  // Build list of distinct attributes from characters
+  const attrs = new Set();
+  state.characters.forEach(c=>c.attrs.forEach(a=>attrs.add(a)));
+  const arr = Array.from(attrs).sort();
+  questionSelect.innerHTML = "";
+  arr.forEach(a=>{
+    const opt = document.createElement("option");
+    opt.value = a;
+    opt.textContent = "¿El personaje tiene: "+a+"?";
+    questionSelect.appendChild(opt);
+  });
+  if(arr.length===0){
+    const opt = document.createElement("option");
+    opt.value = "__none";
+    opt.textContent = "No hay preguntas definidas. Añade atributos en aprendizaje.";
+    questionSelect.appendChild(opt);
+  }
+}
+
+function renderCharacters(){
+  charactersDiv.innerHTML = "";
+  state.characters.forEach((c,idx)=>{
+    const card = document.createElement("div");
+    card.className = "card";
+    if(!currentCandidates.includes(c.name)) card.classList.add("hidden");
+    const img = document.createElement("div");
+    img.style.height = "120px";
+    img.style.borderRadius = "6px";
+    img.style.background = "linear-gradient(135deg,#eee,#ddd)";
+    img.style.display = "flex";
+    img.style.alignItems = "center";
+    img.style.justifyContent = "center";
+    img.style.fontSize = "12px";
+    img.textContent = c.name;
+    const name = document.createElement("div");
+    name.textContent = c.name;
+    const attrs = document.createElement("div");
+    attrs.className = "small";
+    attrs.textContent = "Atributos: " + c.attrs.join(", ");
+    card.appendChild(img);
+    card.appendChild(name);
+    card.appendChild(attrs);
+    charactersDiv.appendChild(card);
+  });
+}
+
+function log(msg){
+  logArea.textContent = "Estado: "+msg;
+}
+
+askBtn.addEventListener("click", ()=>{
+  const q = questionSelect.value;
+  if(!q || q==="__none"){ alert("No hay preguntas disponibles. Active aprendizaje o agregue atributos."); return; }
+  lastAsked = q;
+  // Ask user: yes/no
+  const ans = confirm("¿El personaje tiene: " + q + " ? (Aceptar=Sí / Cancelar=No)");
+  applyAnswer(q, ans);
+});
+
+function applyAnswer(attribute, yes){
+  // Forward chaining: eliminate candidates that don't match answer
+  if(yes){
+    currentCandidates = currentCandidates.filter(name=>{
+      const ch = state.characters.find(c=>c.name===name);
+      return ch && ch.attrs.includes(attribute);
+    });
+  }else{
+    currentCandidates = currentCandidates.filter(name=>{
+      const ch = state.characters.find(c=>c.name===name);
+      return ch && !ch.attrs.includes(attribute);
+    });
+  }
+  renderCharacters();
+  log("Quedan " + currentCandidates.length + " candidatos.");
+  if(currentCandidates.length===1){
+    alert("¡Quedó 1 candidato! Es: " + currentCandidates[0]);
+    afterResult.style.display = "block";
+    realNameInput.value = currentCandidates[0];
+  }else if(currentCandidates.length===0){
+    alert("No quedan candidatos: revise atributos o reinicie.");
+    afterResult.style.display = "block";
+  }
+}
+
+guessBtn.addEventListener("click", ()=>{
+  // simple guess: pick top candidate or ask user to click
+  if(currentCandidates.length===0){ alert("No hay candidatos. Reinicie."); return; }
+  const guess = currentCandidates[Math.floor(Math.random()*currentCandidates.length)];
+  const ok = confirm("Mi adivinanza: ¿Es " + guess + " ? (Aceptar = Sí, Cancelar = No)");
+  if(ok){
+    alert("¡Gané!");
+    afterResult.style.display = "block";
+    realNameInput.value = guess;
+  }else{
+    alert("Oh, fallo. Por favor indícame quién era para aprender.");
+    afterResult.style.display = "block";
+  }
+});
+
+resetBtn.addEventListener("click", ()=>{
+  currentCandidates = state.characters.map(c=>c.name);
+  renderCharacters();
+  log("Juego reiniciado. " + currentCandidates.length + " candidatos.");
+  afterResult.style.display = "none";
+});
+
+submitResultBtn.addEventListener("click", ()=>{
+  const real = realNameInput.value.trim();
+  if(!real){ alert("Escribe el nombre real del personaje."); return; }
+  const ch = state.characters.find(c=>c.name.toLowerCase()===real.toLowerCase());
+  const newAttrsRaw = newAttributesInput.value.trim();
+  if(ch){
+    if(learnEnabled && newAttrsRaw){
+      const newAttrs = newAttrsRaw.split(",").map(s=>s.trim()).filter(Boolean);
+      newAttrs.forEach(a=>{
+        if(!ch.attrs.includes(a)) ch.attrs.push(a);
+      });
+      saveState(state);
+      alert("Atributos añadidos al personaje guardados localmente.");
+    }else{
+      alert("Resultado recibido. (No se agregó aprendizaje por estar desactivado o no tener atributos nuevos.)");
+    }
+  }else{
+    // add new character if learning enabled
+    if(learnEnabled){
+      const attrs = newAttrsRaw.split(",").map(s=>s.trim()).filter(Boolean);
+      state.characters.push({name:real, attrs:attrs});
+      saveState(state);
+      alert("Nuevo personaje agregado y guardado localmente.");
+    }else{
+      alert("Personaje desconocido. Active aprendizaje para que el sistema guarde nuevos personajes.");
+    }
+  }
+  afterResult.style.display = "none";
+  buildQuestions();
+  currentCandidates = state.characters.map(c=>c.name);
+  renderCharacters();
+});
+
+
+// initialization
+buildQuestions();
+renderCharacters();
+log("Juego cargado. " + state.characters.length + " personajes disponibles.");
+
+// expose reset local storage button via double-click on header
+document.querySelector("h1").addEventListener("dblclick", ()=>{
+  if(confirm("¿Borrar aprendizaje guardado en este navegador?")){ localStorage.removeItem(STORAGE_KEY); state = {characters: defaultCharacters.slice(), questions:null}; buildQuestions(); renderCharacters(); log("Aprendizaje borrado."); }
+});
+</script>
+</body>
+</html>
+"""
+
+# README and manual text (for PDF)
+manual_text = """
+Adivina Quién - Tema: Kimetsu no Yaiba
+-------------------------------------
+
+Contenido:
+- Descripción del juego
+- Requisitos y archivo entregable
+- Cómo jugar (manual de usuario)
+- Implementación técnica
+  - Estructura de datos
+  - Motor de reglas (encadenamiento hacia adelante)
+  - Aprendizaje (persistencia y actualización)
+- Casos de uso / ejemplos
+- Instrucciones para subir a GitHub e itch.io
+- Formato de archivo requerido:
+  GradoGrupo_Registro_PracticaX.pdf
+
+1) Descripción
+El proyecto implementa un simulador web del juego de mesa "Adivina Quién" con personajes del anime "Kimetsu no Yaiba" (Demon Slayer). El juego está implementado en un único archivo HTML/JS que puede correr en cualquier navegador moderno. El usuario puede activar un modo de aprendizaje que guarda cambios localmente (localStorage).
+
+2) Requisitos y entrega
+- Archivos incluidos:
+  - index.html (juego)
+  - manual PDF (este documento)
+  - README.txt (instrucciones)
+- Nombre del PDF: GradoGrupo_Registro_PracticaX.pdf (reemplazar grado, grupo y número de práctica)
+- Subir el juego a GitHub (repositorio público) y a itch.io (como proyecto HTML).
+
+3) Cómo jugar (manual de usuario)
+- Abra index.html en un navegador.
+- Active "Aprendizaje" si desea que el sistema guarde cambios localmente.
+- Seleccione una pregunta en el menú desplegable y pulse "Preguntar".
+  - Responda "Aceptar" para Sí y "Cancelar" para No.
+- El sistema eliminará candidatos usando el atributo preguntado (encadenamiento hacia adelante).
+- Cuando quede 1 candidato, el sistema lo indicará.
+- Si el juego falla, indique el personaje real y agregue atributos nuevos si lo desea.
+
+4) Implementación técnica
+- Estructura de datos:
+  - Cada personaje: { name: string, attrs: [string] }
+  - Estado guardado en localStorage bajo la clave "adivina_kny_v1".
+
+- Motor de reglas (encadenamiento hacia adelante):
+  - Las preguntas son atributos (ej. "usa katana").
+  - Al preguntar, se evalúa la condición (atributo presente o no) y se eliminan los personajes que no cumplen la condición — esto es aplicación directa del encadenamiento hacia adelante (forward chaining): reglas "Si atributo X es verdadero, entonces conservar personajes con X; si es falso, eliminar personajes con X".
+  - No se usa un motor de inferencia completo, pero la lógica simula el proceso de disparo de reglas: cada pregunta es una regla que reduce el conjunto de candidatos.
+
+- Aprendizaje:
+  - Si el usuario activa aprendizaje, puede:
+    - Añadir atributos a personajes existentes.
+    - Añadir nuevos personajes con atributos.
+  - Los cambios se guardan en localStorage y se usan para futuras partidas en el mismo navegador.
+
+5) Casos de uso / ejemplos
+- Caso: Preguntar "respira agua" (Sí) -> conserva Tanjiro y Giyu; elimina personajes sin ese atributo.
+- Caso: Sistema no encuentra candidatos -> el usuario puede reiniciar o agregar datos de aprendizaje.
+
+6) Subir a GitHub e itch.io
+- GitHub:
+  - Crear nuevo repositorio público.
+  - Subir los archivos: index.html, GradoGrupo_Registro_PracticaX.pdf, README.txt.
+  - Incluir descripción y licencia (ej. MIT).
+- itch.io:
+  - Crear cuenta y subir proyecto HTML.
+  - En "Kind of project" seleccionar "HTML" y subir el zip con index.html.
+  - Marcar como public o hidden según la entrega.
+
+7) Observaciones finales
+- Las imágenes se incluyen como espacios reservados. Para mejorar: reemplazar por imágenes de los personajes respetando derechos de autor o usar fanart/autorías con permiso.
+- Para un aprendizaje más avanzado, se puede conectar a un backend y almacenar los datos en un repositorio remoto (GitHub/Gist o una base de datos).
+
+Fin del manual.
+"""
+
+readme_text = """Instrucciones para GitHub y itch.io
+----------------------------------
+Archivos:
+- index.html
+- GradoGrupo_Registro_PracticaX.pdf  (renombrar según formato pedido)
+- README.txt
+
+GitHub:
+1. Crear repo público.
+2. Subir los archivos.
+3. Activar GitHub Pages si quiere servir index.html directamente.
+
+itch.io:
+1. Crear cuenta.
+2. Subir un nuevo proyecto -> HTML.
+3. Subir ZIP que contenga index.html y recursos.
+4. Publicar y compartir enlace.
+
+"""
+
+# Save files
+index_path = out_dir / "index.html"
+index_path.write_text(html_content, encoding="utf-8")
+
+manual_txt_path = out_dir / "manual.txt"
+manual_txt_path.write_text(manual_text, encoding="utf-8")
+
+readme_path = out_dir / "README.txt"
+readme_path.write_text(readme_text, encoding="utf-8")
+
+# Create PDF manual using reportlab
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+pdf_path = out_dir / "GradoGrupo_Registro_PracticaX.pdf"
+c = canvas.Canvas(str(pdf_path), pagesize=letter)
+width, height = letter
+textobject = c.beginText(40, height - 40)
+textobject.setFont("Helvetica", 10)
+for line in manual_text.splitlines():
+    textobject.textLine(line)
+c.drawText(textobject)
+c.showPage()
+c.save()
+
+# Create zip for itch.io (zip must contain index.html at root)
+zip_path = out_dir / "adivina_quien_kny_zip_for_itchio_and_github.zip"
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.write(index_path, arcname="index.html")
+    zf.write(pdf_path, arcname="GradoGrupo_Registro_PracticaX.pdf")
+    zf.write(readme_path, arcname="README.txt")
+
+# List created files
+created = {
+    "index_html": str(index_path),
+    "pdf_manual": str(pdf_path),
+    "zip": str(zip_path),
+    "readme": str(readme_path),
+    "folder": str(out_dir)
+}
+created
+

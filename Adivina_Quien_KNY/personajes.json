@@ -1,0 +1,59 @@
+{
+  "Tanjiro Kamado": {
+    "es_protagonista": "si",
+    "es_demonio": "no",
+    "usa_espada": "si",
+    "es_pilar": "no",
+    "es_hombre": "si",
+    "tiene_hermana": "si"
+  },
+  "Nezuko Kamado": {
+    "es_protagonista": "si",
+    "es_demonio": "si",
+    "usa_espada": "no",
+    "es_pilar": "no",
+    "es_mujer": "si",
+    "tiene_hermano": "si"
+  },
+  "Zenitsu Agatsuma": {
+    "es_protagonista": "si",
+    "es_demonio": "no",
+    "usa_espada": "si",
+    "es_pilar": "no",
+    "es_hombre": "si",
+    "tiene_miedo": "si"
+  },
+  "Inosuke Hashibira": {
+    "es_protagonista": "si",
+    "es_demonio": "no",
+    "usa_espada": "si",
+    "es_pilar": "no",
+    "lleva_mascara": "si",
+    "es_hombre": "si"
+  },
+  "Giyu Tomioka": {
+    "es_pilar": "si",
+    "usa_espada": "si",
+    "es_hombre": "si",
+    "controla_agua": "si",
+    "es_demonio": "no"
+  },
+  "Shinobu Kocho": {
+    "es_pilar": "si",
+    "usa_espada": "si",
+    "usa_veneno": "si",
+    "es_mujer": "si",
+    "es_demonio": "no"
+  },
+  "Muzan Kibutsuji": {
+    "es_demonio": "si",
+    "es_rey_demonios": "si",
+    "usa_espada": "no",
+    "es_hombre": "si"
+  },
+  "Tamayo": {
+    "es_demonio": "si",
+    "ayuda_a_tanjiro": "si",
+    "es_mujer": "si"
+  }
+}
